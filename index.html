@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>もっちりエスケープ - Extreme</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0f0c29; font-family: 'Helvetica Neue', Arial, sans-serif; touch-action: none; }
+        canvas { display: block; }
+        
+        /* 共通のオーバーレイ設定 */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: white; text-align: center; z-index: 20;
+            background: rgba(15, 12, 41, 0.85);
+            transition: opacity 0.5s;
+        }
+
+        /* タイトル画面の装飾 */
+        h1 { font-size: 48px; margin-bottom: 10px; color: #00fff2; text-shadow: 0 0 20px #00fff2; }
+        .description { font-size: 16px; line-height: 1.6; margin-bottom: 30px; color: #ccc; }
+        .highlight { color: #f9d423; font-weight: bold; }
+
+        /* スコア表示 */
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: #00fff2;
+            font-size: 24px; font-weight: bold; pointer-events: none;
+            text-shadow: 0 0 10px rgba(0,255,242,0.5); z-index: 10; display: none;
+        }
+
+        /* ボタンデザイン */
+        button {
+            background: transparent; border: 2px solid #00fff2; color: #00fff2;
+            padding: 15px 40px; font-size: 22px; font-weight: bold; border-radius: 50px;
+            cursor: pointer; transition: all 0.3s; box-shadow: 0 0 15px rgba(0,255,242,0.2);
+        }
+        button:hover { background: #00fff2; color: #1a1a2e; box-shadow: 0 0 30px #00fff2; }
+        button:active { transform: scale(0.95); }
+
+        #gameOverScreen { display: none; }
+    </style>
+</head>
+<body>
+    <div id="ui">SCORE: <span id="score">0</span></div>
+
+    <div id="titleScreen" class="overlay">
+        <h1>MOCHIRI<br>ESCAPE</h1>
+        <div class="description">
+            <p>画面を<span class="highlight">ドラッグ</span>してスライムを操作！</p>
+            <p><span class="highlight">黄色い星</span>を集めてスコアアップ。<br>
+            迫りくる<span style="color:#ff0055">赤いヤツ</span>を音速で回避せよ。</p>
+        </div>
+        <button onclick="startGame()">GAME START</button>
+    </div>
+
+    <div id="gameOverScreen" class="overlay">
+        <h2 style="font-size: 40px; color:#ff0055; margin:0;">GAME OVER</h2>
+        <p style="font-size: 20px;">最終記録: <span id="finalScore" class="highlight" style="font-size: 30px;">0</span></p>
+        <button onclick="resetGame()">RETRY</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const finalScoreEl = document.getElementById('finalScore');
+const ui = document.getElementById('ui');
+const titleScreen = document.getElementById('titleScreen');
+const gameOverScreen = document.getElementById('gameOverScreen');
+
+let score = 0;
+let gameActive = false; // 最初はオフ
+let isDragging = false;
+let target = { x: 0, y: 0 };
+
+let player = {
+    x: 0, y: 0,
+    radius: 18,
+    speed: 8.5,
+    trail: []
+};
+
+let enemies = [];
+let food = { x: 0, y: 0, radius: 12 };
+let particles = [];
+
+function init() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    player.x = canvas.width / 2;
+    player.y = canvas.height / 2;
+    target.x = player.x;
+    target.y = player.y;
+    spawnFood();
+}
+
+// ゲーム開始処理
+function startGame() {
+    titleScreen.style.display = 'none';
+    ui.style.display = 'block';
+    gameActive = true;
+    // 初期化
+    score = 0;
+    scoreEl.innerText = '0';
+    enemies = [];
+    particles = [];
+    init();
+}
+
+const updateTarget = (e) => {
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    target.x = clientX;
+    target.y = clientY;
+};
+
+// 入力イベント
+canvas.addEventListener('mousedown', (e) => { if(gameActive) { isDragging = true; updateTarget(e); } });
+window.addEventListener('mousemove', (e) => { if(isDragging && gameActive) updateTarget(e); });
+window.addEventListener('mouseup', () => { isDragging = false; });
+
+canvas.addEventListener('touchstart', (e) => { 
+    if(gameActive) { e.preventDefault(); isDragging = true; updateTarget(e); }
+}, {passive: false});
+canvas.addEventListener('touchmove', (e) => { 
+    if(gameActive) { e.preventDefault(); updateTarget(e); }
+}, {passive: false});
+canvas.addEventListener('touchend', () => { isDragging = false; });
+
+function spawnFood() {
+    food.x = 50 + Math.random() * (canvas.width - 100);
+    food.y = 50 + Math.random() * (canvas.height - 100);
+}
+
+function spawnEnemy() {
+    const side = Math.floor(Math.random() * 4);
+    let x, y;
+    if (side === 0) { x = -30; y = Math.random() * canvas.height; }
+    else if (side === 1) { x = canvas.width + 30; y = Math.random() * canvas.height; }
+    else if (side === 2) { x = Math.random() * canvas.width; y = -30; }
+    else { x = Math.random() * canvas.width; y = canvas.height + 30; }
+    
+    enemies.push({
+        x: x, y: y,
+        speed: 2.2 + (score * 0.15),
+        radius: 15
+    });
+}
+
+function update() {
+    if (!gameActive) return;
+
+    if (isDragging) {
+        const dx = target.x - player.x;
+        const dy = target.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 5) {
+            const angle = Math.atan2(dy, dx);
+            player.x += Math.cos(angle) * player.speed;
+            player.y += Math.sin(angle) * player.speed;
+        }
+    }
+
+    player.trail.unshift({ x: player.x, y: player.y });
+    if (player.trail.length > 15) player.trail.pop();
+
+    if (Math.hypot(player.x - food.x, player.y - food.y) < player.radius + food.radius) {
+        score++;
+        scoreEl.innerText = score;
+        spawnFood();
+        spawnEnemy();
+        for(let i=0; i<12; i++) particles.push({
+            x: food.x, y: food.y, 
+            vx: (Math.random()-0.5)*15, vy: (Math.random()-0.5)*15, 
+            life: 1.0, color: '#00fff2'
+        });
+    }
+
+    enemies.forEach((enemy) => {
+        const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+        enemy.x += Math.cos(angle) * enemy.speed;
+        enemy.y += Math.sin(angle) * enemy.speed;
+        if (Math.hypot(player.x - enemy.x, player.y - enemy.y) < player.radius + enemy.radius - 3) {
+            doGameOver();
+        }
+    });
+
+    particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.04;
+        if (p.life <= 0) particles.splice(i, 1);
+    });
+}
+
+function draw() {
+    ctx.fillStyle = 'rgba(15, 12, 41, 0.3)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (gameActive || player.trail.length > 0) {
+        player.trail.forEach((t, i) => {
+            ctx.fillStyle = `rgba(0, 255, 242, ${1 - i/15})`;
+            ctx.beginPath(); ctx.arc(t.x, t.y, player.radius * (1-i/18), 0, Math.PI*2); ctx.fill();
+        });
+    }
+
+    if (gameActive) {
+        ctx.fillStyle = '#f9d423';
+        ctx.shadowBlur = 15; ctx.shadowColor = '#f9d423';
+        ctx.beginPath(); ctx.arc(food.x, food.y, food.radius, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
+
+        enemies.forEach(enemy => {
+            ctx.fillStyle = '#ff0055';
+            ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.fillRect(enemy.x-4, enemy.y-4, 2, 2); ctx.fillRect(enemy.x+2, enemy.y-4, 2, 2);
+        });
+    }
+
+    particles.forEach(p => {
+        ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1.0;
+
+    update();
+    requestAnimationFrame(draw);
+}
+
+function doGameOver() {
+    gameActive = false;
+    isDragging = false;
+    finalScoreEl.innerText = score;
+    gameOverScreen.style.display = 'flex';
+}
+
+function resetGame() {
+    gameOverScreen.style.display = 'none';
+    startGame();
+}
+
+window.addEventListener('resize', init);
+init();
+draw();
+</script>
+</body>
+</html>
